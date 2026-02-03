@@ -36,17 +36,27 @@ namespace AmerciaMarketSecFactWeb.SecEdgar
 
         public async Task<SecCompanyFactsDto?> GetCompanyFactsAsync(string cik)
         {
-            var url = $"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json";
-
+            var requestUrl = $"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json";
             try
             {
                 using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
 
-                var res = await _http.GetAsync(url, cts.Token);
+                var sentAt = DateTime.UtcNow;
+
+                var res = await _http.GetAsync(requestUrl, cts.Token);
+
+                var receivedAt = DateTime.UtcNow;
 
                 if (!res.IsSuccessStatusCode)
+                {                 
+                    await SecLog.LogAsync(requestUrl, "SKIP", sentAt, receivedAt, string.Empty, "SecFact");
                     return null;
-
+                }
+                else
+                {
+                    await SecLog.LogAsync(requestUrl, "Success", sentAt, receivedAt, string.Empty, "SecFact");
+                }
+                
                 var json = await res.Content.ReadAsStringAsync();
 
                 return JsonSerializer.Deserialize<SecCompanyFactsDto>(
