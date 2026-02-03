@@ -12,7 +12,6 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using static System.Net.WebRequestMethods;
 
-
 namespace AmerciaMarketSecFactWeb
 {
     class Program
@@ -57,54 +56,80 @@ namespace AmerciaMarketSecFactWeb
             var client = new SecEdgarClient(_httpClientSEC);
 
             // Get companies to update
-            var companiesList = await GetCompaniesFromRefreshSPAsync(); 
+            var companiesList = await GetCompaniesFromRefreshSPAsync();
 
             Console.WriteLine($"Companies: {companiesList.Count}");
 
             int total = companiesList.Count;
 
             _secCurrentCount = 0;
+            var tasks = new List<Task>();
+
+            var semaphore = new SemaphoreSlim(6); // 👈 máximo 3 paralelos
 
             foreach (var company in companiesList)
             {
-                _secCurrentCount++;
-
-                Console.WriteLine($"➡ {_secCurrentCount}/{total} {company.Descrip}");
-
-                try
-                {
-                    sentAt = DateTime.UtcNow;
-                    bool ok = await ImportCompanyFacts( company.Id, company.Descrip, client );
-
-                    if (ok)
-                    {
-                        Console.WriteLine($"✔ OK: {company.Descrip}");
-                    }
-                    else
-                    {
-                        Console.WriteLine($"⚠ SKIP: {company.Descrip}");
-                    }
-                }
-                catch (Exception ex)
-                {
-                    receivedAt = DateTime.UtcNow;
-                    Console.WriteLine($"❌ ERROR: {company.Descrip}");
-                    Console.WriteLine(ex); 
-                    await SecLog.LogAsync($"https://data.sec.gov/api/xbrl/companyfacts/CIK{company.Id}.json", "[ERROR]", sentAt, receivedAt, $"[ERR]  {company.Id.ToString()} " + " - " + ex.Message, "SecFact");
-                }
-
-                // Respeta rate limit SEC
-                await Task.Delay(3000);
+                tasks.Add(ProcessCompanyAsync(
+                    company,
+                    client,
+                    semaphore,
+                    total
+                ));
             }
+
+            await Task.WhenAll(tasks);
 
             Console.WriteLine("✅ SEC import completed");
         }
-         
+
+        private async Task ProcessCompanyAsync(BasicEntityDto company, SecEdgarClient client, SemaphoreSlim semaphore, int total)
+        {
+            await semaphore.WaitAsync();
+
+            DateTime? sentAt = null;
+            DateTime? receivedAt = null;
+
+            try
+            {
+                int index = Interlocked.Increment(ref _secCurrentCount);
+
+                Console.WriteLine($"➡ {index}/{total} {company.Descrip}");
+
+                sentAt = DateTime.UtcNow;
+
+                bool ok = await ImportCompanyFacts( company.Id,  company.Descrip, client );
+
+                if (ok)
+                {
+                    Console.WriteLine($"✔ OK: {company.Descrip}");
+                }
+                else
+                {
+                    Console.WriteLine($"⚠ SKIP: {company.Descrip}");
+                }
+            }
+            catch (Exception ex)
+            {
+                receivedAt = DateTime.UtcNow;
+
+                Console.WriteLine($"❌ ERROR: {company.Descrip}");
+                Console.WriteLine(ex);
+                await SecLog.LogAsync($"https://data.sec.gov/api/xbrl/companyfacts/CIK{company.Id}.json", "[ERROR]", sentAt, receivedAt, $"[ERR] {company.Id} - {ex.Message}", "SecFact");
+            }
+            finally
+            {
+                // ⏱ Delay para respetar SEC
+                await Task.Delay(2000);
+
+                semaphore.Release();
+            }
+        }
+
 
         // ===============================
         // IMPORT
         // ===============================
-        private async Task<bool> ImportCompanyFacts( string cik,  string name,  SecEdgarClient client)
+        private async Task<bool> ImportCompanyFacts(string cik, string name, SecEdgarClient client)
         {
             var sec = await client.GetCompanyFactsAsync(cik);
 
