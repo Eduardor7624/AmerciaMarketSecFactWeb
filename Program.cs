@@ -47,17 +47,25 @@ namespace AmerciaMarketSecFactWeb
         // ===============================
         private async Task RunSecEdgarJobAsync()
         {
+            // variables for log 
+            string? requestUrl = null;
+            string? responseText = null;
+            DateTime? sentAt = null;
+            DateTime? receivedAt = null;
+            string? exceptionText = null;
+
             var client = new SecEdgarClient(_httpClientSEC);
 
-            var companies = await GetCompaniesFromRefreshSPAsync();
+            // Get companies to update
+            var companiesList = await GetCompaniesFromRefreshSPAsync(); 
 
-            Console.WriteLine($"Companies: {companies.Count}");
+            Console.WriteLine($"Companies: {companiesList.Count}");
 
-            int total = companies.Count;
+            int total = companiesList.Count;
 
             _secCurrentCount = 0;
 
-            foreach (var company in companies)
+            foreach (var company in companiesList)
             {
                 _secCurrentCount++;
 
@@ -65,6 +73,7 @@ namespace AmerciaMarketSecFactWeb
 
                 try
                 {
+                    sentAt = DateTime.UtcNow;
                     bool ok = await ImportCompanyFacts( company.Id, company.Descrip, client );
 
                     if (ok)
@@ -78,8 +87,10 @@ namespace AmerciaMarketSecFactWeb
                 }
                 catch (Exception ex)
                 {
+                    receivedAt = DateTime.UtcNow;
                     Console.WriteLine($"❌ ERROR: {company.Descrip}");
-                    Console.WriteLine(ex);
+                    Console.WriteLine(ex); 
+                    await SecLog.LogAsync($"https://data.sec.gov/api/xbrl/companyfacts/CIK{company.Id}.json", "[ERROR]", sentAt, receivedAt, $"[ERR]  {company.Id.ToString()} " + " - " + ex.Message, "SecFact");
                 }
 
                 // Respeta rate limit SEC
@@ -129,10 +140,11 @@ namespace AmerciaMarketSecFactWeb
             return http;
         }
 
+
         // ===============================
-        // DB
+        // DB get list of Companies to Update from  sp_GetCompaniesToRefreshFacts 
         // ===============================
-        private async Task<List<BasicEntityDto>> GetCompaniesFromRefreshSPAsync()
+        public async Task<List<BasicEntityDto>> GetCompaniesFromRefreshSPAsync()
         {
             await using var conn =
                 new SqlConnection(DbConnections.AmericaMarketSec);
@@ -150,7 +162,7 @@ namespace AmerciaMarketSecFactWeb
             return await ReadCompaniesAsync(dr);
         }
 
-        private static async Task<List<BasicEntityDto>> ReadCompaniesAsync( SqlDataReader dr)
+        public static async Task<List<BasicEntityDto>> ReadCompaniesAsync(SqlDataReader dr)
         {
             var result = new List<BasicEntityDto>();
 
