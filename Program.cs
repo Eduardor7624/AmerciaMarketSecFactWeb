@@ -65,7 +65,7 @@ namespace AmerciaMarketSecFactWeb
             _secCurrentCount = 0;
             var tasks = new List<Task>();
 
-            var semaphore = new SemaphoreSlim(6); // 👈 máximo 3 paralelos
+            var semaphore = new SemaphoreSlim(3); // 👈 máximo 3 paralelos
 
             foreach (var company in companiesList)
             {
@@ -97,7 +97,7 @@ namespace AmerciaMarketSecFactWeb
 
                 sentAt = DateTime.UtcNow;
 
-                bool ok = await ImportCompanyFacts( company.Id,  company.Descrip, client );
+                bool ok = await ImportCompanyFacts(company.Id, company.Descrip, client);
 
                 if (ok)
                 {
@@ -131,17 +131,33 @@ namespace AmerciaMarketSecFactWeb
         // ===============================
         private async Task<bool> ImportCompanyFacts(string cik, string name, SecEdgarClient client)
         {
-            var sec = await client.GetCompanyFactsAsync(cik);
+            int retries = 3;
 
-            if (sec == null)
+            for (int i = 1; i <= retries; i++)
             {
-                Console.WriteLine($"[SKIP] {name} ({cik})");
-                return false;
+                try
+                {
+                    var sec = await client.GetCompanyFactsAsync(cik);
+
+                    if (sec == null)
+                        return false;
+
+                    await client.ImportCompanyFactsAsync(sec, cik, name);
+
+                    return true; // ✅ éxito
+                }
+                catch (SqlException ex) when (ex.Number == 1205)
+                {
+                    Console.WriteLine($"⚠ DEADLOCK {cik} retry {i}");
+
+                    await Task.Delay(2000 * i); // backoff
+
+                    if (i == retries)
+                        throw;
+                }
             }
 
-            await client.ImportCompanyFactsAsync(sec, cik, name);
-
-            return true;
+            return false;
         }
 
         // ===============================

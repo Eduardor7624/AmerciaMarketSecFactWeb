@@ -160,29 +160,37 @@ namespace AmerciaMarketSecFactWeb.SecEdgar
 
         private async Task<int> GetOrCreateCompanyAsync( SqlConnection conn, SqlTransaction tx, string cik, string? ticker, string? name)
         {
-            const string sql = @"UPDATE SecRawFactCompany
-                                 SET
-                                  Ticker=@Ticker,
-                                  Name=@Name,
-                                  UpdatedDate=SYSUTCDATETIME()
-                                 WHERE Cik=@Cik;
-                                 
-                                 IF @@ROWCOUNT=0
-                                 BEGIN
-                                  INSERT INTO SecRawFactCompany
-                                  (
-                                   Cik,Ticker,Name,CreatedDate,UpdatedDate
-                                  )
-                                  VALUES
-                                  (
-                                   @Cik,@Ticker,@Name,
-                                   SYSUTCDATETIME(),SYSUTCDATETIME()
-                                  );
-                                 END
-                                 
-                                 SELECT CompanyId
-                                 FROM SecRawFactCompany
-                                 WHERE Cik=@Cik;
+            const string sql = @"MERGE SecRawFactCompany WITH (HOLDLOCK) AS T
+                                  USING (SELECT @Cik AS Cik) AS S
+                                  ON T.Cik = S.Cik
+                                  
+                                  WHEN MATCHED THEN
+                                      UPDATE SET
+                                          Ticker = @Ticker,
+                                          Name = @Name,
+                                          UpdatedDate = SYSUTCDATETIME()
+                                  
+                                  WHEN NOT MATCHED THEN
+                                      INSERT
+                                      (
+                                          Cik,
+                                          Ticker,
+                                          Name,
+                                          CreatedDate,
+                                          UpdatedDate
+                                      )
+                                      VALUES
+                                      (
+                                          @Cik,
+                                          @Ticker,
+                                          @Name,
+                                          SYSUTCDATETIME(),
+                                          SYSUTCDATETIME()
+                                      );
+                                  
+                                  SELECT CompanyId
+                                  FROM SecRawFactCompany
+                                  WHERE Cik = @Cik;
                                  ";
 
             using var cmd =
@@ -235,11 +243,7 @@ namespace AmerciaMarketSecFactWeb.SecEdgar
             return newId;
         }
 
-        private async Task<int> GetOrCreateConceptAsync(
-            SqlConnection conn,
-            SqlTransaction tx,
-            string taxonomy,
-            string concept)
+        private async Task<int> GetOrCreateConceptAsync( SqlConnection conn, SqlTransaction tx, string taxonomy, string concept)
         {
             const string sql = @"IF NOT EXISTS
                                 (
@@ -278,10 +282,7 @@ namespace AmerciaMarketSecFactWeb.SecEdgar
         // UNIT (CACHE)
         // ============================
 
-        private async Task<int> GetUnitCachedAsync(
-            SqlConnection conn,
-            SqlTransaction tx,
-            string unit)
+        private async Task<int> GetUnitCachedAsync( SqlConnection conn, SqlTransaction tx, string unit)
         {
             lock (_lock)
             {
@@ -341,37 +342,47 @@ namespace AmerciaMarketSecFactWeb.SecEdgar
 
         private async Task UpsertFinancialFactAsync( SqlConnection conn, SqlTransaction tx, int companyId, int conceptId, int unitId, ConceptUnitValueDto v)
         {
-            const string sql = @"UPDATE SecRawFactFinancialFact
-                               SET
-                                Value=@Value,
-                                FiledDate=@FiledDate,
-                                AccessionNumber=@Accession,
-                                UpdatedDate=SYSUTCDATETIME()
-                               WHERE
-                                CompanyId=@CompanyId
-                                AND ConceptId=@ConceptId
-                                AND UnitId=@UnitId
-                                AND FiscalYear=@FiscalYear
-                                AND FiscalPeriod=@FiscalPeriod
-                                AND FormType=@FormType;
-                               
-                               IF @@ROWCOUNT=0
-                               BEGIN
-                                INSERT INTO SecRawFactFinancialFact
+            const string sql = @"MERGE SecRawFactFinancialFact WITH (HOLDLOCK) AS T
+                                USING
                                 (
-                                 CompanyId,ConceptId,UnitId,
-                                 FiscalYear,FiscalPeriod,FormType,
-                                 AccessionNumber,Value,FiledDate,
-                                 CreatedDate,UpdatedDate
-                                )
-                                VALUES
-                                (
-                                 @CompanyId,@ConceptId,@UnitId,
-                                 @FiscalYear,@FiscalPeriod,@FormType,
-                                 @Accession,@Value,@FiledDate,
-                                 SYSUTCDATETIME(),SYSUTCDATETIME()
-                                );
-                               END
+                                    SELECT
+                                        @CompanyId    AS CompanyId,
+                                        @ConceptId    AS ConceptId,
+                                        @UnitId       AS UnitId,
+                                        @FiscalYear   AS FiscalYear,
+                                        @FiscalPeriod AS FiscalPeriod,
+                                        @FormType     AS FormType
+                                ) AS S
+                                ON
+                                    T.CompanyId    = S.CompanyId
+                                AND T.ConceptId    = S.ConceptId
+                                AND T.UnitId       = S.UnitId
+                                AND T.FiscalYear   = S.FiscalYear
+                                AND T.FiscalPeriod = S.FiscalPeriod
+                                AND T.FormType     = S.FormType
+                                
+                                WHEN MATCHED THEN
+                                    UPDATE SET
+                                        Value           = @Value,
+                                        FiledDate       = @FiledDate,
+                                        AccessionNumber = @Accession,
+                                        UpdatedDate     = SYSUTCDATETIME()
+                                
+                                WHEN NOT MATCHED THEN
+                                    INSERT
+                                    (
+                                        CompanyId, ConceptId, UnitId,
+                                        FiscalYear, FiscalPeriod, FormType,
+                                        AccessionNumber, Value, FiledDate,
+                                        CreatedDate, UpdatedDate
+                                    )
+                                    VALUES
+                                    (
+                                        @CompanyId, @ConceptId, @UnitId,
+                                        @FiscalYear, @FiscalPeriod, @FormType,
+                                        @Accession, @Value, @FiledDate,
+                                        SYSUTCDATETIME(), SYSUTCDATETIME()
+                                    );
                                ";
 
             decimal? value = null;
