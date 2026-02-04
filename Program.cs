@@ -36,7 +36,10 @@ namespace AmerciaMarketSecFactWeb
                 Console.WriteLine("[FATAL]");
                 Console.WriteLine(ex);
             }
-
+            finally
+            {
+                Environment.Exit(0);
+            }
             Console.WriteLine("Finished.");
             Console.ReadLine();
         }
